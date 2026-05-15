@@ -1,126 +1,104 @@
 from flask import Flask, render_template, request, redirect, jsonify
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
 from flask_bcrypt import Bcrypt
-import json
+from flask_sqlalchemy import SQLAlchemy
 import random
 
 app = Flask(__name__)
 app.secret_key = "space-secret-key"
 
+# БАЗА ДАННЫХ
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///users.db"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+db = SQLAlchemy(app)
+
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 
-# ---------------- ПОЛЬЗОВАТЕЛЬ ----------------
-class User(UserMixin):
-    def __init__(self, username):
-        self.id = username
+# ---------- МОДЕЛЬ ПОЛЬЗОВАТЕЛЯ ----------
+class User(db.Model, UserMixin):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), unique=True, nullable=False)
+    password = db.Column(db.String(200), nullable=False)
 
 @login_manager.user_loader
-def load_user(username):
-    return User(username)
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
-# ---------------- БАЗА ПОЛЬЗОВАТЕЛЕЙ ----------------
-def load_users():
-    try:
-        with open("users.json", "r") as f:
-            return json.load(f)
-    except:
-        return {}
+# ---------- СОЗДАНИЕ БАЗЫ ----------
+@app.before_first_request
+def create_tables():
+    db.create_all()
 
-def save_users(users):
-    with open("users.json", "w") as f:
-        json.dump(users, f)
-
-# ---------------- СОСТОЯНИЕ СПУТНИКА ----------------
+# ---------- СОСТОЯНИЕ СПУТНИКА ----------
 battery = 100
 altitude = 400
 
-# ---------------- LOGIN ----------------
+# ---------- LOGIN ----------
 @app.route("/login", methods=["GET","POST"])
 def login():
     if request.method == "POST":
-        username = request.form["username"]
-        password = request.form["password"]
+        user = User.query.filter_by(username=request.form["username"]).first()
 
-        users = load_users()
-
-        if username in users and bcrypt.check_password_hash(users[username], password):
-            login_user(User(username))
+        if user and bcrypt.check_password_hash(user.password, request.form["password"]):
+            login_user(user)
             return redirect("/")
 
         return "❌ Неверный логин или пароль"
 
     return render_template("login.html")
 
-# ---------------- REGISTER ----------------
+# ---------- REGISTER ----------
 @app.route("/register", methods=["GET","POST"])
 def register():
     if request.method == "POST":
         username = request.form["username"]
-        password = request.form["password"]
+        password = bcrypt.generate_password_hash(request.form["password"]).decode("utf-8")
 
-        users = load_users()
-
-        if username in users:
+        if User.query.filter_by(username=username).first():
             return "Пользователь уже существует"
 
-        hash_pass = bcrypt.generate_password_hash(password).decode("utf-8")
-        users[username] = hash_pass
-        save_users(users)
+        new_user = User(username=username, password=password)
+        db.session.add(new_user)
+        db.session.commit()
 
         return """
-<h1 style='text-align:center;margin-top:150px;font-family:Arial'>
-✅ Пользователь успешно создан!<br><br>
-Спасибо за регистрацию 🚀<br><br>
-<a href='/login'>Вернуться ко входу</a>
-</h1>
-"""
+        <h1 style='text-align:center;margin-top:150px;font-family:Arial'>
+        ✅ Пользователь создан!<br><br>
+        Спасибо за внимание 🚀<br><br>
+        <a href='/login'>Вернуться ко входу</a>
+        </h1>
+        """
 
     return render_template("register.html")
 
-# ---------------- LOGOUT ----------------
+# ---------- LOGOUT ----------
 @app.route("/logout")
 @login_required
 def logout():
     logout_user()
     return redirect("/login")
 
-# ---------------- ГЛАВНАЯ ----------------
+# ---------- ГЛАВНАЯ ----------
 @app.route("/")
 @login_required
 def index():
     return render_template("index.html")
 
-# ---------------- ТЕЛЕМЕТРИЯ (БЕЗ РАЗРЯДА) ----------------
+# ---------- ТЕЛЕМЕТРИЯ ----------
 @app.route("/telemetry")
 @login_required
 def telemetry():
-    global battery, altitude
-
     data = {
         "speed": random.randint(26000, 28000),
         "altitude": altitude,
-        "temperature": random.randint(-270, -250),
+        "temperature": random.randint(-270, -260),
         "battery": battery
     }
-
     return jsonify(data)
 
-# ---------------- АВАРИЙНЫЕ ДЕЙСТВИЯ ----------------
-@app.route("/emergency/backup")
-@login_required
-def backup_battery():
-    global battery
-    battery = 50
-    return jsonify({"status":"Запасная батарея активирована"})
-
-@app.route("/emergency/shutdown")
-@login_required
-def shutdown():
-    return jsonify({"status":"Система отключена"})
-
-# ---------------- КОМАНДЫ СПУТНИКА ----------------
+# ---------- КОМАНДЫ ----------
 @app.route("/capture")
 @login_required
 def capture():
@@ -136,6 +114,6 @@ def return_home():
 def photo():
     return jsonify({"status":"Фото сделано"})
 
-# ---------------- ЗАПУСК ----------------
+# ---------- ЗАПУСК ----------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
