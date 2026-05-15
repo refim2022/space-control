@@ -69,7 +69,13 @@ def register():
         users[username] = hash_pass
         save_users(users)
 
-        return "✅ Пользователь создан! <a href='/login'>Войти</a>"
+        return """
+<h1 style='text-align:center;margin-top:150px;font-family:Arial'>
+✅ Пользователь успешно создан!<br><br>
+Спасибо за регистрацию 🚀<br><br>
+<a href='/login'>Вернуться ко входу</a>
+</h1>
+"""
 
     return render_template("register.html")
 
