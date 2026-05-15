@@ -3,3 +3,7 @@ gunicorn
 flask-login
 flask-bcrypt
 flask-sqlalchemy
+Flask
+Flask-Login
+Flask-SQLAlchemy
+Werkzeug

@@ -1,119 +1,194 @@
-from flask import Flask, render_template, request, redirect, jsonify
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
-from flask_bcrypt import Bcrypt
+from flask import Flask, render_template_string, request, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
-import random
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-app.secret_key = "space-secret-key"
+app.config['SECRET_KEY'] = "space-secret-key"
+app.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:///users.db"
 
-# БАЗА ДАННЫХ
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///users.db"
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(app)
 
-bcrypt = Bcrypt(app)
-login_manager = LoginManager(app)
+login_manager = LoginManager()
+login_manager.init_app(app)
 login_manager.login_view = "login"
 
-# ---------- МОДЕЛЬ ПОЛЬЗОВАТЕЛЯ ----------
-class User(db.Model, UserMixin):
+
+# ------------------- DATABASE -------------------
+
+class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(50), unique=True, nullable=False)
-    password = db.Column(db.String(200), nullable=False)
+    username = db.Column(db.String(100), unique=True)
+    password = db.Column(db.String(200))
+    role = db.Column(db.String(20), default="operator")
+
 
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# ---------- СОЗДАНИЕ БАЗЫ ----------
-@app.before_first_request
-def create_tables():
-    db.create_all()
 
-# ---------- СОСТОЯНИЕ СПУТНИКА ----------
-battery = 100
-altitude = 400
+# ------------------- HOME -------------------
 
-# ---------- LOGIN ----------
-@app.route("/login", methods=["GET","POST"])
-def login():
-    if request.method == "POST":
-        user = User.query.filter_by(username=request.form["username"]).first()
+@app.route("/")
+@login_required
+def home():
+    return render_template_string("""
+        <h1>🚀 Space Control</h1>
+        <p>Вы вошли как: <b>{{current_user.username}}</b></p>
+        <p>Роль: <b>{{current_user.role}}</b></p>
 
-        if user and bcrypt.check_password_hash(user.password, request.form["password"]):
-            login_user(user)
-            return redirect("/")
+        <a href="/logout">Выйти</a><br><br>
 
-        return "❌ Неверный логин или пароль"
+        {% if current_user.role == "admin" %}
+            <a href="/admin">Админ панель</a>
+        {% endif %}
+    """)
 
-    return render_template("login.html")
 
-# ---------- REGISTER ----------
+# ------------------- REGISTER -------------------
+
 @app.route("/register", methods=["GET","POST"])
 def register():
     if request.method == "POST":
         username = request.form["username"]
-        password = bcrypt.generate_password_hash(request.form["password"]).decode("utf-8")
+        password = generate_password_hash(request.form["password"])
 
         if User.query.filter_by(username=username).first():
             return "Пользователь уже существует"
 
-        new_user = User(username=username, password=password)
+        # первый пользователь становится админом
+        role = "admin" if User.query.count() == 0 else "operator"
+
+        new_user = User(username=username, password=password, role=role)
         db.session.add(new_user)
         db.session.commit()
 
-        return """
-        <h1 style='text-align:center;margin-top:150px;font-family:Arial'>
-        ✅ Пользователь создан!<br><br>
-        Спасибо за внимание 🚀<br><br>
-        <a href='/login'>Вернуться ко входу</a>
-        </h1>
-        """
+        return render_template_string("""
+            <h2>Регистрация завершена</h2>
+            <p>Спасибо за внимание ❤️</p>
+            <a href="/login">Вернуться ко входу</a>
+        """)
 
-    return render_template("register.html")
+    return render_template_string("""
+        <h2>Регистрация</h2>
+        <form method="post">
+            Логин:<br><input name="username"><br><br>
+            Пароль:<br><input name="password" type="password"><br><br>
+            <button>Зарегистрироваться</button>
+        </form>
+        <br>
+        <a href="/login">Назад</a>
+    """)
 
-# ---------- LOGOUT ----------
+
+# ------------------- LOGIN -------------------
+
+@app.route("/login", methods=["GET","POST"])
+def login():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"]
+
+        user = User.query.filter_by(username=username).first()
+
+        if user and check_password_hash(user.password, password):
+            login_user(user)
+            return redirect("/")
+
+        return "Неверный логин или пароль"
+
+    return render_template_string("""
+        <h2>Вход</h2>
+        <form method="post">
+            Логин:<br><input name="username"><br><br>
+            Пароль:<br><input name="password" type="password"><br><br>
+            <button>Войти</button>
+        </form>
+        <br>
+        <a href="/register">Регистрация</a>
+    """)
+
+
+# ------------------- LOGOUT -------------------
+
 @app.route("/logout")
 @login_required
 def logout():
     logout_user()
     return redirect("/login")
 
-# ---------- ГЛАВНАЯ ----------
-@app.route("/")
-@login_required
-def index():
-    return render_template("index.html")
 
-# ---------- ТЕЛЕМЕТРИЯ ----------
-@app.route("/telemetry")
-@login_required
-def telemetry():
-    data = {
-        "speed": random.randint(26000, 28000),
-        "altitude": altitude,
-        "temperature": random.randint(-270, -260),
-        "battery": battery
-    }
-    return jsonify(data)
+# ------------------- ADMIN PANEL -------------------
 
-# ---------- КОМАНДЫ ----------
-@app.route("/capture")
+@app.route("/admin")
 @login_required
-def capture():
-    return jsonify({"status":"Мусор захвачен"})
+def admin_panel():
+    if current_user.role != "admin":
+        return "Доступ запрещён"
 
-@app.route("/return")
+    users = User.query.all()
+
+    return render_template_string("""
+        <h1>🛠 Админ панель</h1>
+        <h3>Пользователи:</h3>
+
+        {% for user in users %}
+            <p>
+                <b>{{user.username}}</b> — {{user.role}}
+
+                {% if user.id != current_user.id %}
+                    | <a href="/change_role/{{user.id}}">Сменить роль</a>
+                    | <a href="/delete_user/{{user.id}}">Удалить</a>
+                {% endif %}
+            </p>
+        {% endfor %}
+
+        <br><a href="/">Назад</a>
+    """, users=users)
+
+
+# ------------------- CHANGE ROLE -------------------
+
+@app.route("/change_role/<int:user_id>")
 @login_required
-def return_home():
-    return jsonify({"status":"Возврат на базу"})
+def change_role(user_id):
+    if current_user.role != "admin":
+        return "Доступ запрещён"
 
-@app.route("/photo")
+    user = User.query.get(user_id)
+
+    if user.id == current_user.id:
+        return "Нельзя менять свою роль"
+
+    user.role = "admin" if user.role == "operator" else "operator"
+    db.session.commit()
+
+    return redirect("/admin")
+
+
+# ------------------- DELETE USER -------------------
+
+@app.route("/delete_user/<int:user_id>")
 @login_required
-def photo():
-    return jsonify({"status":"Фото сделано"})
+def delete_user(user_id):
+    if current_user.role != "admin":
+        return "Доступ запрещён"
 
-# ---------- ЗАПУСК ----------
+    user = User.query.get(user_id)
+
+    if user.id == current_user.id:
+        return "Нельзя удалить самого себя"
+
+    db.session.delete(user)
+    db.session.commit()
+
+    return redirect("/admin")
+
+
+# ------------------- START -------------------
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True)
