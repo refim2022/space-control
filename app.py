@@ -101,7 +101,7 @@ def telemetry():
     data = {
         "speed": random.randint(26000, 28000),
         "altitude": altitude,
-        "temperature": random.randint(-140, -60),
+        "temperature": random.randint(-270, -260),
         "battery": battery
     }
 
