@@ -1,85 +1,135 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask import Flask, render_template, request, redirect, jsonify
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
+from flask_bcrypt import Bcrypt
+import json
 import random
-import threading
-import time
 
 app = Flask(__name__)
+app.secret_key = "space-secret-key"
 
-# логин/пароль
-USERNAME = "Efimka"
-PASSWORD = "17517"
+bcrypt = Bcrypt(app)
+login_manager = LoginManager(app)
+login_manager.login_view = "login"
 
-# начальные телеметрические данные
-telemetry = {
-    "speed": 27000,       # км/ч
-    "altitude": 450,      # км
-    "temperature": -260,   # °C
-    "battery": 100,    
-    "time": 0    # %
-}
+# ---------------- ПОЛЬЗОВАТЕЛЬ ----------------
+class User(UserMixin):
+    def __init__(self, username):
+        self.id = username
 
-# флаг для остановки потока при завершении сервера
-running = True
+@login_manager.user_loader
+def load_user(username):
+    return User(username)
 
-# функция обновления телеметрии
-def update_telemetry():
-    while running:
-        # скорость колеблется ±200 км/ч
-        telemetry["speed"] += random.randint(-200, 200)
-        # температура колеблется ±2 градуса, остаётся отрицательной
-        telemetry["temperature"] += random.randint(-2, 2)
-        if telemetry["temperature"] > -260:
-            telemetry["temperature"] = -260
-        # батарея снижается на 2% каждые 60 секунд
-        #telemetry["battery"] -= 2
-        #if telemetry["time"] == 60:
-        #    telemetry["battery"] = max(0, telemetry["battery"] - 2)
-        #telemetry["time"] == 0
-        time.sleep(1)  # 60 секунд
-        #telemetry["time"] += 1
+# ---------------- БАЗА ПОЛЬЗОВАТЕЛЕЙ ----------------
+def load_users():
+    try:
+        with open("users.json", "r") as f:
+            return json.load(f)
+    except:
+        return {}
 
-# запускаем поток телеметрии
-thread = threading.Thread(target=update_telemetry)
-thread.daemon = True
-thread.start()
+def save_users(users):
+    with open("users.json", "w") as f:
+        json.dump(users, f)
 
-# --------- Авторизация ---------
-@app.route("/", methods=["GET", "POST"])
+# ---------------- СОСТОЯНИЕ СПУТНИКА ----------------
+battery = 100
+altitude = 400
+
+# ---------------- LOGIN ----------------
+@app.route("/login", methods=["GET","POST"])
 def login():
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
-        if username == USERNAME and password == PASSWORD:
-            # батарея сбрасывается на 100 при входе
-            telemetry["battery"] = 100
-            return redirect(url_for("home"))
-        else:
-            return render_template("login.html", error="Неверный логин или пароль")
-    return render_template("login.html", error=None)
+        username = request.form["username"]
+        password = request.form["password"]
 
-@app.route("/home")
-def home():
+        users = load_users()
+
+        if username in users and bcrypt.check_password_hash(users[username], password):
+            login_user(User(username))
+            return redirect("/")
+
+        return "❌ Неверный логин или пароль"
+
+    return render_template("login.html")
+
+# ---------------- REGISTER ----------------
+@app.route("/register", methods=["GET","POST"])
+def register():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"]
+
+        users = load_users()
+
+        if username in users:
+            return "Пользователь уже существует"
+
+        hash_pass = bcrypt.generate_password_hash(password).decode("utf-8")
+        users[username] = hash_pass
+        save_users(users)
+
+        return "✅ Пользователь создан! <a href='/login'>Войти</a>"
+
+    return render_template("register.html")
+
+# ---------------- LOGOUT ----------------
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect("/login")
+
+# ---------------- ГЛАВНАЯ ----------------
+@app.route("/")
+@login_required
+def index():
     return render_template("index.html")
 
-# --------- API ---------
+# ---------------- ТЕЛЕМЕТРИЯ (БЕЗ РАЗРЯДА) ----------------
 @app.route("/telemetry")
-def telemetry_route():
-    return jsonify(telemetry)
+@login_required
+def telemetry():
+    global battery, altitude
 
+    data = {
+        "speed": random.randint(26000, 28000),
+        "altitude": altitude,
+        "temperature": random.randint(-140, -60),
+        "battery": battery
+    }
+
+    return jsonify(data)
+
+# ---------------- АВАРИЙНЫЕ ДЕЙСТВИЯ ----------------
+@app.route("/emergency/backup")
+@login_required
+def backup_battery():
+    global battery
+    battery = 50
+    return jsonify({"status":"Запасная батарея активирована"})
+
+@app.route("/emergency/shutdown")
+@login_required
+def shutdown():
+    return jsonify({"status":"Система отключена"})
+
+# ---------------- КОМАНДЫ СПУТНИКА ----------------
 @app.route("/capture")
+@login_required
 def capture():
-    return jsonify({"status": "Захват мусора запущен"})
+    return jsonify({"status":"Мусор захвачен"})
 
 @app.route("/return")
-def return_base():
-    return jsonify({"status": "Аппарат возвращается на базу"})
+@login_required
+def return_home():
+    return jsonify({"status":"Возврат на базу"})
 
 @app.route("/photo")
+@login_required
 def photo():
-    return jsonify({"status": "Фото сделано и отправлено на Землю"})
+    return jsonify({"status":"Фото сделано"})
 
+# ---------------- ЗАПУСК ----------------
 if __name__ == "__main__":
-    try:
-        app.run(debug=True)
-    finally:
-        running = False
+    app.run(host="0.0.0.0", port=10000)
