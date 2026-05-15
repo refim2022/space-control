@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Космо-Воин — Вход</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<h1>Вход в Центр управления Космо-Воин</h1>
+
+<form method="post">
+    <label>Логин: <input type="text" name="username" required></label><br><br>
+    <label>Пароль: <input type="password" name="password" required></label><br><br>
+    <button type="submit">Войти</button>
+</form>
+
+{% if error %}
+<p style="color:red;">{{ error }}</p>
+{% endif %}
+</body>
+</html>

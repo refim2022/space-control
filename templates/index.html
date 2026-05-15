@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Космо-Воин — Центр управления</title>
+<link rel="stylesheet" href="/static/style.css">
+
+<style>
+#emergency{
+    display:none;
+    position:fixed;
+    top:0;left:0;
+    width:100%;
+    height:100%;
+    background:black;
+    color:white;
+    text-align:center;
+    padding-top:200px;
+    font-size:28px;
+    z-index:9999;
+
+    /* ВОТ ГЛАВНОЕ ИСПРАВЛЕНИЕ */
+    pointer-events:none;
+}
+#emergency.active{
+    display:block;
+    pointer-events:auto;
+}
+.controlBtn:disabled{
+    opacity:0.5;
+}
+</style>
+</head>
+
+<body>
+
+<h1>🛰 Центр управления миссией Космо-Воин</h1>
+
+<div class="panel">
+<h2>Телеметрия</h2>
+<p>Скорость: <span id="speed">...</span> км/ч</p>
+<p>Высота: <span id="altitude">...</span> км</p>
+<p>Температура: <span id="temp">...</span> °C</p>
+<p>Батарея: <span id="battery">...</span> %</p>
+</div>
+
+<div class="panel">
+<h2>Управление аппаратом</h2>
+<button class="controlBtn" onclick="sendCommand('/capture')">Захватить мусор</button>
+<button class="controlBtn" onclick="sendCommand('/return')">Вернуться на базу</button>
+<button class="controlBtn" onclick="sendCommand('/photo')">Сделать фото</button>
+</div>
+
+<div class="panel">
+<h2>Видеопоток</h2>
+<img src="https://images-assets.nasa.gov/image/iss040e090540/iss040e090540~orig.jpg" width="400">
+</div>
+
+<!-- ЭКСТРЕННОЕ ОКНО -->
+<div id="emergency">
+⚠️ БАТАРЕЯ = 0%<br><br>
+<button onclick="emergencyAction('backup')" style="font-size:20px;">Включить запасную батарею</button>
+<br><br>
+<button onclick="emergencyAction('shutdown')" style="font-size:20px;">Выключить систему</button>
+</div>
+
+<script>
+let systemShutdown=false;
+
+function lockControls(state){
+ document.querySelectorAll(".controlBtn").forEach(btn=>btn.disabled=state);
+}
+
+async function updateTelemetry(){
+ if(systemShutdown) return;
+
+ const res=await fetch("/telemetry");
+ const data=await res.json();
+
+ speed.innerText=data.speed;
+ altitude.innerText=data.altitude;
+ temp.innerText=data.temperature;
+ battery.innerText=data.battery;
+
+ if(data.battery<=0){
+   document.getElementById("emergency").classList.add("active");
+   lockControls(true);
+ }else{
+   document.getElementById("emergency").classList.remove("active");
+   lockControls(false);
+ }
+}
+
+async function emergencyAction(action){
+ const res=await fetch("/emergency/"+action);
+ const data=await res.json();
+ alert(data.status);
+
+ if(action==="backup"){
+   document.getElementById("emergency").classList.remove("active");
+   lockControls(false);
+ }
+
+ if(action==="shutdown"){
+   systemShutdown=true;
+   document.body.innerHTML=`
+   <div style="background:black;height:100vh;color:white;text-align:center;padding-top:150px;">
+   <h1>СИСТЕМА ОТКЛЮЧЕНА</h1>
+   <p>Связь с аппаратом потеряна</p>
+   <img src="https://images-assets.nasa.gov/image/iss040e090540/iss040e090540~orig.jpg" width="400">
+   </div>`;
+ }
+}
+
+async function sendCommand(url){
+ if(systemShutdown) return;
+ const res=await fetch(url);
+ const data=await res.json();
+ alert(data.status);
+}
+
+setInterval(updateTelemetry,2000);
+</script>
+
+</body>
+</html>
